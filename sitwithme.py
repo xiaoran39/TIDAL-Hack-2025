@@ -7,10 +7,8 @@ import streamlit as st
 from google.genai import Client
 
 # -------------------
-# Gemini client setup
+# 🔐 Gemini setup
 # -------------------
-
-
 client = Client(api_key="AIzaSyDIHWpyBgJvR7iN3ywo4ah_VnyQFIwIn2I")
 
 APP_TITLE = "🎉 SitWithMe – Smart Party Planner"
@@ -41,11 +39,12 @@ with st.sidebar:
     if st.button("🪑 View Seating"):
         st.session_state.page = "results"
 
+
 # -------------------
-# Helpers
+# Helper functions
 # -------------------
 def parse_json_lenient(s: str):
-    """Extract valid JSON from model text, even if wrapped in code fences."""
+    """Extract valid JSON even if formatted oddly."""
     try:
         return json.loads(s)
     except Exception:
@@ -59,24 +58,31 @@ def parse_json_lenient(s: str):
     i, j = s.find("{"), s.rfind("}")
     if i != -1 and j != -1:
         try:
-            return json.loads(s[i:j+1])
+            return json.loads(s[i:j + 1])
         except Exception:
             pass
     raise ValueError("Could not parse JSON from model output.")
 
-def generate_ai_interests(event_desc: str):
-    """Ask Gemini to extract 5–10 relevant interests based on the event description."""
+
+def generate_ai_interests(event_name, event_desc, event_vibe):
+    """Generate a diverse set of interests — not limited to event content."""
     try:
         prompt = f"""
-        You are a smart event assistant.
-        Given the following event description, extract 5–10 interests people at this event would likely have.
-        Return ONLY a JSON list of strings (no explanations, no markdown).
+        You are a social event planner AI.
+
+        Come up with 8–12 realistic and varied interests that people attending this event might have.
+        Use the name, description, and vibe as inspiration, but DO NOT restrict interests
+        to only those mentioned. Include a mix of conversational, lifestyle, and fun topics
+        to help guests connect naturally.
+
+        Return ONLY a JSON list of strings (no explanations or markdown).
 
         Example output:
-        ["Food", "Travel", "Tech", "Music", "Networking"]
+        ["Food", "Travel", "Movies", "Technology", "Music", "Art", "Games", "Sports", "Fashion", "Books"]
 
-        Event description:
-        "{event_desc}"
+        Event name: {event_name}
+        Description: {event_desc}
+        Vibe: {', '.join(event_vibe) if event_vibe else 'N/A'}
         """
         resp = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt])
         text = getattr(resp, "text", "") or getattr(resp, "output_text", "")
@@ -85,25 +91,26 @@ def generate_ai_interests(event_desc: str):
             return json.loads(m.group(0))
     except Exception as e:
         st.warning(f"⚠️ Could not auto-generate interests: {e}")
-    return ["Music", "Food", "Travel", "Tech", "Movies", "Art"]
+    return ["Food", "Travel", "Music", "Tech", "Movies", "Art", "Sports"]
+
 
 def gen_seating_json(party):
-    """Generate a JSON seating plan based on guests."""
+    """Generate a seating plan with Gemini."""
     prompt = f"""
     You are an expert event planner AI.
 
     Assign guests into {party['tables']} tables, each with {party['seats_per_table']} seats.
 
-    Guests (list of dicts with name, age, interests):
+    Guests:
     {party['guests']}
 
     Rules:
     - Group guests with overlapping interests and similar ages (±5 years).
-    - Balance table sizes and don't exceed capacity.
-    - If fewer guests than seats, leave empty seats.
-    - Reply with valid JSON only.
+    - Balance table sizes.
+    - Leave empty seats if needed.
+    - Return valid JSON only.
 
-    JSON format:
+    Example format:
     {{
       "tables": [
         {{
@@ -122,50 +129,61 @@ def gen_seating_json(party):
         raise RuntimeError("Empty response from Gemini.")
     return parse_json_lenient(text_out.strip())
 
+
 # -------------------
 # PAGE LOGIC
 # -------------------
 
-# HOME
+# HOME PAGE
 if st.session_state.page == "home":
     st.write("Welcome to SitWithMe! Create or join a party to get started 🎉")
+
 
 # HOST PAGE
 elif st.session_state.page == "host":
     st.subheader("🎉 Create Your Party")
 
+    event_name = st.text_input("Event Name", placeholder="e.g. Startup Mixer")
     event_desc = st.text_area(
         "Describe your event",
-        placeholder="e.g. A rooftop dinner for startup founders who love tech, wine, and good food."
+        placeholder="e.g. A rooftop dinner for founders and creatives to network and unwind."
     )
+    event_vibe = st.multiselect(
+        "Choose the vibe of the event",
+        ["Casual", "Formal", "Networking", "Romantic", "Competitive", "Fun", "Relaxed"]
+    )
+
     num_tables = st.number_input("Number of Tables", min_value=1, max_value=20, step=1)
     seats_per_table = st.number_input("Seats Per Table", min_value=1, max_value=20, step=1)
 
     if st.button("Create Party"):
         party_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        ai_interests = generate_ai_interests(event_desc) if event_desc else ["Music", "Food", "Tech"]
+        ai_interests = generate_ai_interests(event_name, event_desc, event_vibe)
 
         st.session_state.parties[party_code] = {
+            "event_name": event_name,
+            "event_desc": event_desc,
+            "event_vibe": event_vibe,
             "tables": num_tables,
             "seats_per_table": seats_per_table,
-            "event_desc": event_desc,
             "ai_interests": ai_interests,
             "guests": [],
             "seating_result": None
         }
 
-        st.success(f"✅ Party created! Share this code with your guests: **{party_code}**")
-        st.markdown("**🎯 AI-Suggested Interests:**")
+        st.success(f"✅ Party created! Share this code: **{party_code}**")
+        st.markdown("**✨ AI-Generated Interests:**")
         st.write(", ".join(ai_interests))
+
 
 # JOIN PAGE
 elif st.session_state.page == "join":
     st.subheader("🪩 Join a Party")
+
     code = st.text_input("Enter Party Code").upper()
     name = st.text_input("Your Name")
     age = st.number_input("Age", min_value=1, max_value=120, step=1)
 
-    # Use AI-generated interests from host’s party if available
     available_interests = ["Sports", "Music", "Movies", "Travel", "Food", "Tech", "Art", "Books"]
     if code in st.session_state.parties and st.session_state.parties[code].get("ai_interests"):
         available_interests = st.session_state.parties[code]["ai_interests"]
@@ -176,12 +194,13 @@ elif st.session_state.page == "join":
         if code not in st.session_state.parties:
             st.error("❌ Invalid party code!")
         elif not name or not age or not interests:
-            st.error("⚠️ Please fill in all fields and select at least one interest.")
+            st.error("⚠️ Please fill all fields and select at least one interest.")
         else:
             st.session_state.parties[code]["guests"].append(
                 {"name": name, "age": age, "interests": interests}
             )
             st.success(f"🎊 {name} joined party {code}!")
+
 
 # RESULTS PAGE
 elif st.session_state.page == "results":
@@ -194,19 +213,19 @@ elif st.session_state.page == "results":
         else:
             party = st.session_state.parties[code]
             if not party["guests"]:
-                st.warning("⚠️ No guests have joined yet. Share the party code first.")
+                st.warning("⚠️ No guests have joined yet. Share the code first.")
             else:
                 try:
                     seating = gen_seating_json(party)
 
-                    st.markdown("### ✨ AI-Generated Seating Plan")
-                    st.caption("Optimized for social connection and compatibility")
+                    st.markdown("### ✨ AI-Generated Seating Plan ✨")
+                    st.caption("Sit with your people :)")
 
                     tables_data = seating.get("tables", [])
                     cols_per_row = 3
                     for i in range(0, len(tables_data), cols_per_row):
                         cols = st.columns(cols_per_row)
-                        for j, table in enumerate(tables_data[i:i+cols_per_row]):
+                        for j, table in enumerate(tables_data[i:i + cols_per_row]):
                             with cols[j]:
                                 tnum = table.get("table_number", i + j + 1)
                                 assigned = table.get("guests", [])
